@@ -6,7 +6,7 @@ module ActiveRecord
       extend ActiveSupport::Concern
 
       class_methods do
-        attr_accessor :contracted_class, :revision_class_name, :related_with
+        attr_accessor :shared, :revision_class_name, :related_with, :on
 
         def revisioning(options = {})
           extend RevisioningClassMethods
@@ -14,28 +14,30 @@ module ActiveRecord
 
           assign_options(options)
 
-          if contracted_class.present?
-            self.revision_class_name = "#{contracted_class.to_s}Revision"
-            table_exists!(revision_class_name.tableize, contracted_class)
-            has_many :revisions, class_name: revision_class_name
-          else
+          if shared
             self.revision_class_name = "::Revisioning::Revision"
             require 'revisioning/revision'
             table_exists!(revision_class_name.constantize.table_name)
             has_many :revisions, as: :revisionable, class_name: revision_class_name, inverse_of: :revisionable
+          else
+            self.revision_class_name = "#{self.to_s}Revision"
+            table_exists!(revision_class_name.tableize, self)
+            has_many :revisions, class_name: revision_class_name
           end
 
-          after_create :revision_create    if options[:on].include?(:create)
-          before_update :revision_update   if options[:on].include?(:update)
-          before_destroy :revision_destroy if options[:on].include?(:destroy)
+          after_create :revision_create    if on.include?(:create)
+          before_update :revision_update   if on.include?(:update)
+          before_destroy :revision_destroy if on.include?(:destroy)
         end
 
         private
 
         def assign_options(options = {})
-          if options[:contract_with].present?
-            raise ArgumentError, 'specify class for contract_with' if options[:contract_with].class != Class
-            self.contracted_class = options[:contract_with]
+          if options[:shared].present?
+            raise ArgumentError, 'specify boolean for shared' if [true, false].include?(options[:shared])
+            self.shared = options[:shared]
+          else
+            self.shared = false
           end
 
           if options[:related_with].present?
@@ -43,6 +45,13 @@ module ActiveRecord
             raise ArgumentError, 'specify symbol of existing class as related_with' unless const_defined?(related_class_name)
             self.related_with = options[:related_with]
           end
+
+          self.on = Array.wrap(options[:on])
+          self.on = [:create, :update, :destroy] if on.empty?
+
+          options[:only] = Array.wrap(options[:only]).map(&:to_s)
+          options[:except] = Array.wrap(options[:except]).map(&:to_s)
+          options[:max_audits] = Integer(options[:max_audits]).abs if options[:max_audits]
         end
       end
     end
@@ -54,7 +63,7 @@ module ActiveRecord
           message = "#{table_name} table not created. run `rails generate revisioning:revision"
           message << " #{contracted.to_s}" unless contracted.nil?
           message << " && rails db:migrate"
-          raise ::Revisioning::TableNotCreatedError, message
+          #raise ::Revisioning::TableNotCreatedError, message
         end
       end
     end
